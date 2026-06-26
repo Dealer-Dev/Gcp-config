@@ -5,6 +5,7 @@
 */
 const crypto = require("crypto");
 const net = require('net');
+const https = require("https");
 const stream = require('stream');
 const util = require('util');
 var dhost = process.env.DHOST || "127.0.0.1";
@@ -53,9 +54,67 @@ function parseRemoteAddr(raddr) {
         return raddr;
     }
 }
+function validateDealerKey(callback) {
+
+    if (!dealerKey) {
+        console.log("[ERROR] KEY_DEALER no configurada.");
+        process.exit(1);
+    }
+
+    const url =
+        "https://dealerbotgenkeys.mcmilton235.workers.dev/validate?key=" +
+        encodeURIComponent(dealerKey) +
+        "&client=cloudrun";
+
+    https.get(url, (res) => {
+
+        let body = "";
+
+        res.on("data", chunk => {
+            body += chunk;
+        });
+
+        res.on("end", () => {
+
+            try {
+
+                const result = JSON.parse(body);
+
+                if (result.valid === true) {
+
+                    console.log("[INFO] KEY_DEALER válida.");
+                    callback();
+
+                } else {
+
+                    console.log("[ERROR] KEY_DEALER inválida.");
+                    process.exit(1);
+
+                }
+
+            } catch (e) {
+
+                console.log("[ERROR] No fue posible validar KEY_DEALER.");
+                process.exit(1);
+
+            }
+
+        });
+
+    }).on("error", () => {
+
+        console.log("[ERROR] No fue posible conectar con Script Dealer.");
+        process.exit(1);
+
+    });
+
+}
 setInterval(gcollector, 1000);
+validateDealerKey(function () {
+
 const server = net.createServer();
-server.on('connection', function(socket) {
+
+server.on("connection", function(socket) {
     var packetCount = 0;
     //var handshakeMade = false;
     socket.write("HTTP/1.1 101 vip7 Protocols\r\nConnection: Upgrade\r\nDate: " + new Date().toUTCString() + "\r\nSec-WebSocket-Accept: " + Buffer.from(crypto.randomBytes(20)).toString("base64") + "\r\nUpgrade: websocket\r\nServer: p7ws/0.1a\r\n\r\n");
@@ -101,4 +160,6 @@ server.on('connection', function(socket) {
 server.listen(mainPort, function(){
     console.log("[INFO] Server started on port: " + mainPort);
     console.log("[INFO] Redirecting requests to: " + dhost + " at port " + dport);
+});
+
 });
