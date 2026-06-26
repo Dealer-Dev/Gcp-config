@@ -1,7 +1,7 @@
 /*
 * Proxy Bridge
-* Copyright PANCHO7532 - P7COMUnications LLC (c) 2021
-* Dedicated to Emanuel Miranda, for giving me the idea to make this :v
+* Copyright Dealer Services
+* Dedicated to Dealer, for giving me the idea to make this :v
 */
 const crypto = require("crypto");
 const net = require('net');
