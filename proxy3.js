@@ -9,6 +9,7 @@ const stream = require('stream');
 const util = require('util');
 var dhost = process.env.DHOST || "127.0.0.1";
 var dport = process.env.DPORT || 40000;
+var dealerKey = process.env.KEY_DEALER || "";
 var mainPort = process.env.PORT || 8080;
 var outputFile = "outputFile.txt";
 var packetsToSkip = process.env.PACKSKIP || 1;
