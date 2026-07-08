@@ -150,91 +150,92 @@ setInterval(gcollector, 1000);
 validateDealerKey(function () {
 
 const server = net.createServer();
-server.on("connection", function(socket) {
 
+server.on('connection', function(socket) {
     var packetCount = 0;
+    //var handshakeMade = false;
+    socket.write("HTTP/1.1 101 vip7 Protocols\r\nConnection: Upgrade\r\nDate: " + new Date().toUTCString() + "\r\nSec-WebSocket-Accept: " + Buffer.from(crypto.randomBytes(20)).toString("base64") + "\r\nUpgrade: websocket\r\nServer: p7ws/0.1a\r\n\r\n");
+    console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
+
     var conn = null;
-    var initialized = false;
+    var selectedBackend = null;
 
-    socket.on("data", function(data) {
-
-        if (!initialized) {
-
-            initialized = true;
-
-            const backend = getBackend(data);
-
-            if (!backend) {
-
-                console.log("[ERROR] Backend inexistente.");
-
-                socket.destroy();
-
-                return;
-
-            }
-
-            console.log("[INFO] Backend seleccionado: " + backend.route);
-            console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
-
-            conn = net.createConnection({
-
-                host: backend.host,
-                port: backend.port
-
-            });
-
-            conn.once("connect", function() {
-
-                socket.write(
-                    "HTTP/1.1 101 vip7 Protocols\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    "Date: " + new Date().toUTCString() + "\r\n" +
-                    "Sec-WebSocket-Accept: " +
-                    Buffer.from(crypto.randomBytes(20)).toString("base64") +
-                    "\r\nUpgrade: websocket\r\n" +
-                    "Server: p7ws/0.1a\r\n\r\n"
-                );
-
-                console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
-
-            });
-
-            conn.on("error", function(error) {
-
-                console.log("[REMOTE] " + error);
-
-                socket.destroy();
-
-            });
-
-        }
-
+    socket.on('data', function(data) {
         if(packetCount < packetsToSkip) {
-
             packetCount++;
-
         } else if(packetCount == packetsToSkip) {
-
-            if(conn){
-
+            if (conn) {
                 conn.write(data);
-
-            }
-
+                }
         }
-
-        if(packetCount > packetsToSkip){
-
+        if(packetCount > packetsToSkip) {
             packetCount = packetsToSkip;
-
         }
-
     });
 
+    socket.once('data', function(data) {
+
+    selectedBackend = getBackend(data);
+
+    if (!selectedBackend) {
+
+        console.log("[ERROR] Backend inexistente.");
+
+        socket.destroy();
+
+        return;
+
+    }
+
+    console.log("[INFO] Backend: " + selectedBackend.route);
+    console.log("[INFO] Destino: " + selectedBackend.host + ":" + selectedBackend.port);
+
+    conn = net.createConnection({
+    host: selectedBackend.host,
+    port: selectedBackend.port
+});
+
+conn.on('connect', function() {
+
+    conn.write(data);
+
+});
+
+conn.on('data', function(data) {
+    socket.write(data);
+});
+
+conn.on('error', function(error) {
+    console.log("[REMOTE] read " + error);
+    socket.destroy();
+});
+
+});
+
+    socket.on('error', function(error) {
+        console.log("[SOCKET] read " + error + " from " + socket.remoteAddress + ":" + socket.remotePort);
+        if (conn) {
+    conn.destroy();
+}
+    });
+
+    socket.on('close', function() {
+        console.log("[INFO] Connection terminated for " + socket.remoteAddress + ":" + socket.remotePort);
+        if (conn) {
+    conn.destroy();
+}
+    });
+});
+    
 server.listen(mainPort, function(){
+
     console.log("[INFO] Server started on port: " + mainPort);
-    console.log("[INFO] Redirecting requests to: " + dhost + " at port " + dport);
+
+    console.log("[INFO] Backend /dealer  : " + (backends["/dealer"] || "No configurado"));
+    console.log("[INFO] Backend /dealer1 : " + (backends["/dealer1"] || "No configurado"));
+    console.log("[INFO] Backend /dealer2 : " + (backends["/dealer2"] || "No configurado"));
+    console.log("[INFO] Backend /dealer3 : " + (backends["/dealer3"] || "No configurado"));
+
 });
 
 });
