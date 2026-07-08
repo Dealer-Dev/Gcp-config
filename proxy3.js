@@ -8,10 +8,18 @@ const net = require('net');
 const https = require("https");
 const stream = require('stream');
 const util = require('util');
-var dhost = process.env.DHOST || "127.0.0.1";
-var dport = process.env.DPORT || 40000;
+
 var dealerKey = process.env.KEY_DEALER || "";
+
+const backends = {
+    "/dealer": process.env.IP || "",
+    "/dealer1": process.env.IP_1 || "",
+    "/dealer2": process.env.IP_2 || "",
+    "/dealer3": process.env.IP_3 || ""
+};
+
 var mainPort = process.env.PORT || 8080;
+
 var outputFile = "outputFile.txt";
 var packetsToSkip = process.env.PACKSKIP || 1;
 var gcwarn = true;
@@ -19,12 +27,6 @@ for(c = 0; c < process.argv.length; c++) {
     switch(process.argv[c]) {
         case "-skip":
             packetsToSkip = process.argv[c + 1];
-            break;
-        case "-dhost":
-            dhost = process.argv[c + 1];
-            break;
-        case "-dport":
-            dport = process.argv[c + 1];
             break;
         case "-mport":
             mainPort = process.argv[c + 1];
@@ -109,54 +111,127 @@ function validateDealerKey(callback) {
     });
 
 }
+function getBackend(request) {
+
+    const firstLine = request.toString().split("\r\n")[0];
+
+    const match = firstLine.match(/^GET\s+([^\s]+)\s+/);
+
+    if (!match) {
+        return null;
+    }
+
+    const route = match[1];
+
+    if (!backends[route]) {
+        return null;
+    }
+
+    const target = backends[route].trim();
+
+    if (!target) {
+        return null;
+    }
+
+    const parts = target.split(":");
+
+    if (parts.length != 2) {
+        return null;
+    }
+
+    return {
+        route: route,
+        host: parts[0],
+        port: parseInt(parts[1], 10)
+    };
+
+}
 setInterval(gcollector, 1000);
 validateDealerKey(function () {
 
 const server = net.createServer();
-
 server.on("connection", function(socket) {
+
     var packetCount = 0;
-    //var handshakeMade = false;
-    socket.write("HTTP/1.1 101 vip7 Protocols\r\nConnection: Upgrade\r\nDate: " + new Date().toUTCString() + "\r\nSec-WebSocket-Accept: " + Buffer.from(crypto.randomBytes(20)).toString("base64") + "\r\nUpgrade: websocket\r\nServer: p7ws/0.1a\r\n\r\n");
-    console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
-    var conn = net.createConnection({host: dhost, port: dport});
-    socket.on('data', function(data) {
-        //pipe sucks
+    var conn = null;
+    var initialized = false;
+
+    socket.on("data", function(data) {
+
+        if (!initialized) {
+
+            initialized = true;
+
+            const backend = getBackend(data);
+
+            if (!backend) {
+
+                console.log("[ERROR] Backend inexistente.");
+
+                socket.destroy();
+
+                return;
+
+            }
+
+            console.log("[INFO] Backend seleccionado: " + backend.route);
+            console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
+
+            conn = net.createConnection({
+
+                host: backend.host,
+                port: backend.port
+
+            });
+
+            conn.once("connect", function() {
+
+                socket.write(
+                    "HTTP/1.1 101 vip7 Protocols\r\n" +
+                    "Connection: Upgrade\r\n" +
+                    "Date: " + new Date().toUTCString() + "\r\n" +
+                    "Sec-WebSocket-Accept: " +
+                    Buffer.from(crypto.randomBytes(20)).toString("base64") +
+                    "\r\nUpgrade: websocket\r\n" +
+                    "Server: p7ws/0.1a\r\n\r\n"
+                );
+
+                console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
+
+            });
+
+            conn.on("error", function(error) {
+
+                console.log("[REMOTE] " + error);
+
+                socket.destroy();
+
+            });
+
+        }
+
         if(packetCount < packetsToSkip) {
-            //console.log("---c1");
+
             packetCount++;
+
         } else if(packetCount == packetsToSkip) {
-            //console.log("---c2");
-            conn.write(data);
+
+            if(conn){
+
+                conn.write(data);
+
+            }
+
         }
-        if(packetCount > packetsToSkip) {
-            //console.log("---c3");
+
+        if(packetCount > packetsToSkip){
+
             packetCount = packetsToSkip;
+
         }
-        //conn.write(data);
+
     });
-    conn.on('data', function(data) {
-        //pipe sucks x2
-        socket.write(data);
-    });
-    socket.once('data', function(data) {
-        /*
-        * Nota para mas tarde, resolver que diferencia hay entre .on y .once
-        */
-    });
-    socket.on('error', function(error) {
-        console.log("[SOCKET] read " + error + " from " + socket.remoteAddress + ":" + socket.remotePort);
-        conn.destroy();
-    });
-    conn.on('error', function(error) {
-        console.log("[REMOTE] read " + error);
-        socket.destroy();
-    });
-    socket.on('close', function() {
-        console.log("[INFO] Connection terminated for " + socket.remoteAddress + ":" + socket.remotePort);
-        conn.destroy();
-    });
-});
+
 server.listen(mainPort, function(){
     console.log("[INFO] Server started on port: " + mainPort);
     console.log("[INFO] Redirecting requests to: " + dhost + " at port " + dport);
