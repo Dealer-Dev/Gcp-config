@@ -161,56 +161,64 @@ server.on('connection', function(socket) {
     var selectedBackend = null;
 
     socket.on('data', function(data) {
-        if(packetCount < packetsToSkip) {
-            packetCount++;
-        } else if(packetCount == packetsToSkip) {
-            if (conn) {
-                conn.write(data);
-                }
+
+    if (!conn) {
+
+        selectedBackend = getBackend(data);
+
+        if (!selectedBackend) {
+
+            console.log("[ERROR] Backend inexistente.");
+            socket.destroy();
+            return;
+
         }
-        if(packetCount > packetsToSkip) {
-            packetCount = packetsToSkip;
-        }
-    });
 
-    socket.once('data', function(data) {
+        console.log("[INFO] Backend: " + selectedBackend.route);
+        console.log("[INFO] Destino: " + selectedBackend.host + ":" + selectedBackend.port);
 
-    selectedBackend = getBackend(data);
+        conn = net.createConnection({
+            host: selectedBackend.host,
+            port: selectedBackend.port
+        });
 
-    if (!selectedBackend) {
+        conn.on('data', function(data) {
+            socket.write(data);
+        });
 
-        console.log("[ERROR] Backend inexistente.");
+        conn.on('error', function(error) {
+            console.log("[REMOTE] read " + error);
+            socket.destroy();
+        });
 
-        socket.destroy();
+        conn.on('connect', function() {
+
+            conn.write(data);
+
+        });
 
         return;
 
     }
 
-    console.log("[INFO] Backend: " + selectedBackend.route);
-    console.log("[INFO] Destino: " + selectedBackend.host + ":" + selectedBackend.port);
+    if(packetCount < packetsToSkip) {
 
-    conn = net.createConnection({
-    host: selectedBackend.host,
-    port: selectedBackend.port
-});
+        packetCount++;
 
-conn.on('connect', function() {
+    } else if(packetCount == packetsToSkip) {
 
-    conn.write(data);
+        conn.write(data);
 
-});
+    }
 
-conn.on('data', function(data) {
-    socket.write(data);
-});
+    if(packetCount > packetsToSkip) {
 
-conn.on('error', function(error) {
-    console.log("[REMOTE] read " + error);
-    socket.destroy();
-});
+        packetCount = packetsToSkip;
+
+    }
 
 });
+
 
     socket.on('error', function(error) {
         console.log("[SOCKET] read " + error + " from " + socket.remoteAddress + ":" + socket.remotePort);
