@@ -197,34 +197,36 @@ server.on('connection', function(socket) {
         console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
 
         conn = net.createConnection({
-            host: backend.host,
-            port: backend.port
-        });
-
-        conn.once('connect', function() {
-
-    socket.write(
-        "HTTP/1.1 101 vip7 Protocols\r\n" +
-        "Connection: Upgrade\r\n" +
-        "Date: " + new Date().toUTCString() + "\r\n" +
-        "Sec-WebSocket-Accept: " +
-        Buffer.from(crypto.randomBytes(20)).toString("base64") +
-        "\r\nUpgrade: websocket\r\n" +
-        "Server: p7ws/0.1a\r\n\r\n"
-    );
-
+    host: backend.host,
+    port: backend.port
 });
+
+socket.write(
+    "HTTP/1.1 101 vip7 Protocols\r\n" +
+    "Connection: Upgrade\r\n" +
+    "Date: " + new Date().toUTCString() + "\r\n" +
+    "Sec-WebSocket-Accept: " +
+    Buffer.from(crypto.randomBytes(20)).toString("base64") +
+    "\r\nUpgrade: websocket\r\n" +
+    "Server: p7ws/0.1a\r\n\r\n"
+);
+
+console.log("[DEBUG] Primer paquete enviado al backend");
 
 conn.write(data);
 
-        conn.on('data', function(chunk) {
+conn.on('data', function(chunk) {
 
-            socket.write(chunk);
+    console.log("[DEBUG] Datos recibidos del backend: " + chunk.length + " bytes);
 
-        });
+    socket.write(chunk);
+
+});
         conn.on('end', function() {
 
-    socket.end();
+    if (!socket.destroyed) {
+        socket.end();
+    }
 
 });
 
@@ -245,8 +247,9 @@ conn.write(data);
 });
         socket.on('end', function() {
 
-    if (conn)
+    if (conn && !conn.destroyed) {
         conn.end();
+    }
 
 });
 
