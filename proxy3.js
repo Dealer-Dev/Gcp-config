@@ -115,34 +115,57 @@ function getBackend(request) {
 
     const firstLine = request.toString().split("\r\n")[0];
 
-    const match = firstLine.match(/^GET\s+([^\s]+)\s+/);
+    const match = firstLine.match(/^GET\s+([^\s]+)\s+/i);
 
     if (!match) {
         return null;
     }
 
-    const route = match[1];
+    const path = match[1];
 
-    if (!backends[route]) {
-        return null;
+    let value = "";
+
+    switch (path) {
+
+        case "/dealer":
+            value = process.env.IP || "";
+            break;
+
+        case "/dealer1":
+            value = process.env.IP_1 || "";
+            break;
+
+        case "/dealer2":
+            value = process.env.IP_2 || "";
+            break;
+
+        case "/dealer3":
+            value = process.env.IP_3 || "";
+            break;
+
+        default:
+            return null;
+
     }
 
-    const target = backends[route].trim();
+    value = value.trim();
 
-    if (!target) {
+    if (value.length === 0)
         return null;
-    }
 
-    const parts = target.split(":");
+    const pos = value.lastIndexOf(":");
 
-    if (parts.length != 2) {
+    if (pos === -1)
         return null;
-    }
 
     return {
-        route: route,
-        host: parts[0],
-        port: parseInt(parts[1], 10)
+
+        host: value.substring(0, pos),
+
+        port: parseInt(value.substring(pos + 1), 10),
+
+        route: path
+
     };
 
 }
@@ -155,70 +178,87 @@ server.on('connection', function(socket) {
     console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
 
     let conn = null;
-    let initialized = false;
 
     socket.on('data', function(data) {
 
-        if (!initialized) {
+    if (!conn) {
 
-            initialized = true;
+        const backend = getBackend(data);
 
-            const backend = getBackend(data);
+        if (!backend) {
 
-            if (!backend) {
-
-                console.log("[ERROR] Backend inexistente.");
-                socket.destroy();
-                return;
-
-            }
-
-            console.log("[INFO] Backend: " + backend.route);
-            console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
-
-            conn = net.createConnection({
-                host: backend.host,
-                port: backend.port
-            });
-
-            conn.once('connect', function() {
-
-                socket.write(
-                    "HTTP/1.1 101 vip7 Protocols\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    "Date: " + new Date().toUTCString() + "\r\n" +
-                    "Sec-WebSocket-Accept: " +
-                    Buffer.from(crypto.randomBytes(20)).toString("base64") +
-                    "\r\nUpgrade: websocket\r\n" +
-                    "Server: p7ws/0.1a\r\n\r\n"
-                );
-
-                conn.write(data);
-
-                socket.pipe(conn);
-                conn.pipe(socket);
-
-            });
-
-            conn.on('error', function(error) {
-
-                console.log("[REMOTE] " + error);
-
-                socket.destroy();
-
-            });
-
-            conn.on('close', function() {
-
-                socket.destroy();
-
-            });
-
+            console.log("[ERROR] Backend inexistente.");
+            socket.destroy();
             return;
 
         }
 
-    });
+        console.log("[INFO] Backend: " + backend.route);
+        console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
+
+        conn = net.createConnection({
+            host: backend.host,
+            port: backend.port
+        });
+
+        conn.once('connect', function() {
+
+    socket.write(
+        "HTTP/1.1 101 vip7 Protocols\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Date: " + new Date().toUTCString() + "\r\n" +
+        "Sec-WebSocket-Accept: " +
+        Buffer.from(crypto.randomBytes(20)).toString("base64") +
+        "\r\nUpgrade: websocket\r\n" +
+        "Server: p7ws/0.1a\r\n\r\n"
+    );
+
+});
+
+conn.write(data);
+
+        conn.on('data', function(chunk) {
+
+            socket.write(chunk);
+
+        });
+        conn.on('end', function() {
+
+    socket.end();
+
+});
+
+        conn.on('error', function(error) {
+
+            console.log("[REMOTE] " + error);
+
+            socket.destroy();
+
+        });
+
+        conn.on('close', function() {
+
+            socket.destroy();
+
+        });
+        socket.on('end', function() {
+
+    if (conn)
+        conn.end();
+
+});
+
+        return;
+
+    }
+
+    if (conn && !conn.destroyed) {
+
+        conn.write(data);
+
+    }
+
+});
 
     socket.on('error', function(error) {
 
