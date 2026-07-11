@@ -1,41 +1,49 @@
 /*
-* Proxy Bridge
-* Copyright Dealer Services
-* Dedicated to Dealer, for giving me the idea to make this :v
+* Proxy Bridge - Multi-Destino (dealer1 / dealer2)
+* Copyright PANCHO7532 - P7COMUnications LLC (c) 2021
+* Dedicated to Emanuel Miranda, for giving me the idea to make this :v
+* Modified for Cloud Run Multi-IP routing by request.
 */
 const crypto = require("crypto");
 const net = require('net');
-const https = require("https");
 const stream = require('stream');
 const util = require('util');
 
-var dealerKey = process.env.KEY_DEALER || "";
+// Configuración de destinos mediante Variables de Entorno (Ideales para Cloud Run)
+var dhost1 = process.env.DHOST1 || "127.0.0.1";
+var dport1 = parseInt(process.env.DPORT1) || 40001;
 
-const backends = {
-    "/dealer": process.env.IP || "",
-    "/dealer1": process.env.IP_1 || "",
-    "/dealer2": process.env.IP_2 || "",
-    "/dealer3": process.env.IP_3 || ""
-};
+var dhost2 = process.env.DHOST2 || "127.0.0.1";
+var dport2 = parseInt(process.env.DPORT2) || 40002;
 
 var mainPort = process.env.PORT || 8080;
-
 var outputFile = "outputFile.txt";
-var packetsToSkip = process.env.PACKSKIP || 1;
 var gcwarn = true;
-for(c = 0; c < process.argv.length; c++) {
+
+// Soporte para argumentos por consola (por si pruebas localmente)
+for(let c = 0; c < process.argv.length; c++) {
     switch(process.argv[c]) {
-        case "-skip":
-            packetsToSkip = process.argv[c + 1];
+        case "-dhost1":
+            dhost1 = process.argv[c + 1];
+            break;
+        case "-dport1":
+            dport1 = parseInt(process.argv[c + 1]);
+            break;
+        case "-dhost2":
+            dhost2 = process.argv[c + 1];
+            break;
+        case "-dport2":
+            dport2 = parseInt(process.argv[c + 1]);
             break;
         case "-mport":
-            mainPort = process.argv[c + 1];
+            mainPort = process.env.PORT || process.argv[c + 1];
             break;
         case "-o":
             outputFile = process.argv[c + 1];
             break;
     }
 }
+
 function gcollector() {
     if(!global.gc && gcwarn) {
         console.log("[WARNING] Garbage Collector isn't enabled! Memory leaks may occur.");
@@ -48,250 +56,95 @@ function gcollector() {
         return;
     }
 }
+
 function parseRemoteAddr(raddr) {
+    if(!raddr) return "unknown";
     if(raddr.toString().indexOf("ffff") != -1) {
-        //is IPV4 address
         return raddr.substring(7, raddr.length);
     } else {
         return raddr;
     }
 }
-function validateDealerKey(callback) {
 
-    if (!dealerKey) {
-        console.log("[ERROR] KEY_DEALER no configurada.");
-        process.exit(1);
-    }
-
-    const url =
-        "https://dealerbotgenkeys.mcmilton235.workers.dev/validate?key=" +
-        encodeURIComponent(dealerKey) +
-        "&client=cloudrun";
-
-    https.get(url, (res) => {
-
-        let body = "";
-
-        res.on("data", chunk => {
-            body += chunk;
-        });
-
-        res.on("end", () => {
-
-            try {
-
-                const result = JSON.parse(body);
-
-                if (result.valid === true) {
-
-                    console.log("[INFO] KEY_DEALER válida.");
-                    callback();
-
-                } else {
-
-                    console.log("[ERROR] KEY_DEALER inválida.");
-                    process.exit(1);
-
-                }
-
-            } catch (e) {
-
-                console.log("[ERROR] No fue posible validar KEY_DEALER.");
-                process.exit(1);
-
-            }
-
-        });
-
-    }).on("error", () => {
-
-        console.log("[ERROR] No fue posible conectar con Script Dealer.");
-        process.exit(1);
-
-    });
-
-}
-function getBackend(request) {
-
-    const firstLine = request.toString().split("\r\n")[0];
-
-    const match = firstLine.match(/^GET\s+([^\s]+)\s+/i);
-
-    if (!match) {
-        return null;
-    }
-
-    const path = match[1];
-
-    let value = "";
-
-    switch (path) {
-
-        case "/dealer":
-            value = process.env.IP || "";
-            break;
-
-        case "/dealer1":
-            value = process.env.IP_1 || "";
-            break;
-
-        case "/dealer2":
-            value = process.env.IP_2 || "";
-            break;
-
-        case "/dealer3":
-            value = process.env.IP_3 || "";
-            break;
-
-        default:
-            return null;
-
-    }
-
-    value = value.trim();
-
-    if (value.length === 0)
-        return null;
-
-    const pos = value.lastIndexOf(":");
-
-    if (pos === -1)
-        return null;
-
-    return {
-
-        host: value.substring(0, pos),
-
-        port: parseInt(value.substring(pos + 1), 10),
-
-        route: path
-
-    };
-
-}
 setInterval(gcollector, 1000);
-validateDealerKey(function () {
 
 const server = net.createServer();
+
 server.on('connection', function(socket) {
+    var handshakeMade = false;
+    var conn = null;
+    var bufferQueue = []; // Guarda los paquetes del cliente mientras se abre el túnel
 
-    console.log("[INFO] Connection received from " + socket.remoteAddress + ":" + socket.remotePort);
-
-    let conn = null;
+    console.log("[INFO] Connection received from " + parseRemoteAddr(socket.remoteAddress) + ":" + socket.remotePort);
 
     socket.on('data', function(data) {
+        // Primer paquete: Leemos el payload para saber a dónde ir
+        if(!handshakeMade) {
+            const payloadStr = data.toString('utf8');
+            let targetHost = dhost1;
+            let targetPort = dport1;
+            let routeLabel = "dealer1 (Default)";
 
-    if (!conn) {
+            // Comprobamos cuál payload se utilizó
+            if (payloadStr.includes("GET /dealer2")) {
+                targetHost = dhost2;
+                targetPort = dport2;
+                routeLabel = "dealer2";
+            }
 
-        const backend = getBackend(data);
+            console.log("[ROUTING] Route [" + routeLabel + "] matched. Bridging to -> " + targetHost + ":" + targetPort);
 
-        if (!backend) {
+            // Creamos la conexión al destino seleccionado en tiempo real
+            conn = net.createConnection({host: targetHost, port: targetPort}, function() {
+                // El destino conectó con éxito, procedemos a responder el handshake al cliente
+                socket.write("HTTP/1.1 101 vip7 Protocols\r\nConnection: Upgrade\r\nDate: " + new Date().toUTCString() + "\r\nSec-WebSocket-Accept: " + Buffer.from(crypto.randomBytes(20)).toString("base64") + "\r\nUpgrade: websocket\r\nServer: p7ws/0.1a\r\n\r\n");
+                
+                handshakeMade = true;
 
-            console.log("[ERROR] Backend inexistente.");
-            socket.destroy();
-            return;
+                // Despachamos cualquier dato que haya entrado en cola mientras se establecía el puente
+                while(bufferQueue.length > 0) {
+                    conn.write(bufferQueue.shift());
+                }
+            });
 
+            // Manejadores de eventos de la conexión remota creados dinámicamente
+            conn.on('data', function(remoteData) {
+                socket.write(remoteData);
+            });
+
+            conn.on('error', function(error) {
+                console.log("[REMOTE] read error: " + error.message);
+                socket.destroy();
+            });
+
+            conn.on('close', function() {
+                console.log("[INFO] Remote endpoint closed the connection.");
+                socket.destroy();
+            });
+
+        } else {
+            // Si el túnel ya está establecido, pasamos los datos o los encolamos temporalmente si conn aún no está listo
+            if(conn && conn.writable) {
+                conn.write(data);
+            } else {
+                bufferQueue.push(data);
+            }
         }
-
-        console.log("[INFO] Backend: " + backend.route);
-        console.log("[INFO] Destino: " + backend.host + ":" + backend.port);
-
-        conn = net.createConnection({
-    host: backend.host,
-    port: backend.port
-});
-
-socket.write(
-    "HTTP/1.1 101 vip7 Protocols\r\n" +
-    "Connection: Upgrade\r\n" +
-    "Date: " + new Date().toUTCString() + "\r\n" +
-    "Sec-WebSocket-Accept: " +
-    Buffer.from(crypto.randomBytes(20)).toString("base64") +
-    "\r\nUpgrade: websocket\r\n" +
-    "Server: p7ws/0.1a\r\n\r\n"
-);
-
-console.log("[DEBUG] Primer paquete enviado al backend");
-
-conn.write(data);
-
-conn.on('data', function(chunk) {
-
-    console.log("[DEBUG] Datos recibidos del backend: " + chunk.length + " bytes);
-
-    socket.write(chunk);
-
-});
-        conn.on('end', function() {
-
-    if (!socket.destroyed) {
-        socket.end();
-    }
-
-});
-
-        conn.on('error', function(error) {
-
-            console.log("[REMOTE] " + error);
-
-            socket.destroy();
-
-        });
-
-        conn.on('close', function() {
-
-    if (!socket.destroyed) {
-        socket.end();
-    }
-
-});
-        socket.on('end', function() {
-
-    if (conn && !conn.destroyed) {
-        conn.end();
-    }
-
-});
-
-        return;
-
-    }
-
-    if (conn && !conn.destroyed) {
-
-        conn.write(data);
-
-    }
-
-});
+    });
 
     socket.on('error', function(error) {
-
-        console.log("[SOCKET] " + error);
-
-        if (conn)
-            conn.destroy();
-
+        console.log("[SOCKET] read " + error.message + " from " + parseRemoteAddr(socket.remoteAddress) + ":" + socket.remotePort);
+        if(conn) conn.destroy();
     });
 
     socket.on('close', function() {
-
-    if (conn && !conn.destroyed) {
-        conn.end();
-    }
-
+        console.log("[INFO] Connection terminated for " + parseRemoteAddr(socket.remoteAddress) + ":" + socket.remotePort);
+        if(conn) conn.destroy();
+    });
 });
 
-});
 server.listen(mainPort, function(){
-
-    console.log("[INFO] Server started on port: " + mainPort);
-
-    console.log("[INFO] Backend /dealer  : " + (backends["/dealer"] || "No configurado"));
-    console.log("[INFO] Backend /dealer1 : " + (backends["/dealer1"] || "No configurado"));
-    console.log("[INFO] Backend /dealer2 : " + (backends["/dealer2"] || "No configurado"));
-    console.log("[INFO] Backend /dealer3 : " + (backends["/dealer3"] || "No configurado"));
-
-});
-
+    console.log("[INFO] Multi-Routing Server started on port: " + mainPort);
+    console.log("[INFO] Target 1 (dealer1): " + dhost1 + ":" + dport1);
+    console.log("[INFO] Target 2 (dealer2): " + dhost2 + ":" + dport2);
 });
