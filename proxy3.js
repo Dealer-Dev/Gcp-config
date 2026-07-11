@@ -238,9 +238,11 @@ conn.write(data);
 
         conn.on('close', function() {
 
-            socket.destroy();
+    if (!socket.destroyed) {
+        socket.end();
+    }
 
-        });
+});
         socket.on('end', function() {
 
     if (conn)
@@ -271,10 +273,11 @@ conn.write(data);
 
     socket.on('close', function() {
 
-        if (conn)
-            conn.destroy();
+    if (conn && !conn.destroyed) {
+        conn.end();
+    }
 
-    });
+});
 
 });
 server.listen(mainPort, function(){
