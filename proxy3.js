@@ -166,7 +166,7 @@ async function checkLicense() {
         process.exit(1);
     }
 
-    const verificationUrl = `${WORKER_URL}/validate?key=${encodeURIComponent(keyDealerFinal)}&client=cloudrun&domain=${encodeURIComponent(runDomain)}`;
+    const verificationUrl = `${https://dealerbotgenkeys.mcmilton235.workers.dev}/validate?key=${encodeURIComponent(keyDealerFinal)}&client=cloudrun&domain=${encodeURIComponent(runDomain)}`;
     console.log("[LICENCIA] Validando clave...");
 
     https.get(verificationUrl, (res) => {
