@@ -1,8 +1,8 @@
 /*
-* Proxy Bridge - Multi-Destino (dealer1 / dealer2) con Validación de Licencia
+* Proxy Bridge - Multi-Destino (dealer1 al dealer5) con Validación de Licencia
 * Copyright PANCHO7532 - P7COMUnications LLC (c) 2021
 * Dedicated to Emanuel Miranda, for giving me the idea to make this :v
-* Modified for Cloud Run Multi-IP routing and license verification.
+* Modified for Cloud Run Multi-IP routing (Up to 5 IPs) and license verification.
 */
 const crypto = require("crypto");
 const net = require('net');
@@ -10,12 +10,14 @@ const stream = require('stream');
 const util = require('util');
 const https = require('https'); // Requerido para validar la clave con el Worker
 
-// Configuración de destinos mediante Variables de Entorno
-var dhost1 = process.env.DHOST1 || "127.0.0.1";
-var dport1 = parseInt(process.env.DPORT1) || 40001;
-
-var dhost2 = process.env.DHOST2 || "127.0.0.1";
-var dport2 = parseInt(process.env.DPORT2) || 40002;
+// Configuración dinámica de hasta 5 destinos mediante Variables de Entorno (o valores por defecto)
+const destinos = {
+    1: { host: process.env.DHOST1 || "127.0.0.1", port: parseInt(process.env.DPORT1) || 40001 },
+    2: { host: process.env.DHOST2 || "127.0.0.1", port: parseInt(process.env.DPORT2) || 40002 },
+    3: { host: process.env.DHOST3 || "127.0.0.1", port: parseInt(process.env.DPORT3) || 40003 },
+    4: { host: process.env.DHOST4 || "127.0.0.1", port: parseInt(process.env.DPORT4) || 40004 },
+    5: { host: process.env.DHOST5 || "127.0.0.1", port: parseInt(process.env.DPORT5) || 40005 }
+};
 
 var mainPort = process.env.PORT || 8080;
 var outputFile = "outputFile.txt";
@@ -23,8 +25,8 @@ var gcwarn = true;
 
 // Requisitos de Validación (Worker & KEY_DEALER)
 const KEY_DEALER = process.env.KEY_DEALER;
-// CAMBIA ESTO por la URL de tu Cloudflare Worker
-const WORKER_URL = "https://tu-worker.workers.dev"; 
+// Cambiado dinámicamente según la URL configurada en tu función
+const WORKER_URL = "https://dealerbotgenkeys.mcmilton235.workers.dev"; 
 
 // Intentar deducir el dominio run.app dinámicamente desde el entorno de Cloud Run
 const RUN_SERVICE = process.env.K_SERVICE || "dealer-service";
@@ -32,33 +34,27 @@ const RUN_PROJECT = process.env.GCP_PROJECT || "google-cloud-project";
 const RUN_REGION = process.env.K_REVISION ? process.env.K_REVISION.split("-").slice(-2, -1)[0] : "us-central1"; 
 var runDomain = `${RUN_SERVICE}-${RUN_PROJECT}.${RUN_REGION}.run.app`;
 
-// Soporte para argumentos por consola (por si pruebas localmente)
+// Soporte dinámico para argumentos por consola de los 5 destinos (-dhostX y -dportX)
 for(let c = 0; c < process.argv.length; c++) {
-    switch(process.argv[c]) {
-        case "-key":
-            process.env.KEY_DEALER = process.argv[c + 1];
-            break;
-        case "-domain":
-            runDomain = process.argv[c + 1];
-            break;
-        case "-dhost1":
-            dhost1 = process.argv[c + 1];
-            break;
-        case "-dport1":
-            dport1 = parseInt(process.argv[c + 1]);
-            break;
-        case "-dhost2":
-            dhost2 = process.argv[c + 1];
-            break;
-        case "-dport2":
-            dport2 = parseInt(process.argv[c + 1]);
-            break;
-        case "-mport":
-            mainPort = process.env.PORT || process.argv[c + 1];
-            break;
-        case "-o":
-            outputFile = process.argv[c + 1];
-            break;
+    const arg = process.argv[c];
+    
+    if (arg === "-key") {
+        process.env.KEY_DEALER = process.argv[c + 1];
+    } else if (arg === "-domain") {
+        runDomain = process.argv[c + 1];
+    } else if (arg === "-mport") {
+        mainPort = process.env.PORT || process.argv[c + 1];
+    } else if (arg === "-o") {
+        outputFile = process.argv[c + 1];
+    } else {
+        // Mapea automáticamente argumentos como -dhost1, -dport1, ..., -dhost5, -dport5
+        for (let i = 1; i <= 5; i++) {
+            if (arg === `-dhost${i}`) {
+                destinos[i].host = process.argv[c + 1];
+            } else if (arg === `-dport${i}`) {
+                destinos[i].port = parseInt(process.argv[c + 1]);
+            }
+        }
     }
 }
 
@@ -100,14 +96,20 @@ server.on('connection', function(socket) {
     socket.on('data', function(data) {
         if(!handshakeMade) {
             const payloadStr = data.toString('utf8');
-            let targetHost = dhost1;
-            let targetPort = dport1;
+            
+            // Destino por defecto (dealer1)
+            let targetHost = destinos[1].host;
+            let targetPort = destinos[1].port;
             let routeLabel = "dealer1 (Default)";
 
-            if (payloadStr.includes("GET /dealer2")) {
-                targetHost = dhost2;
-                targetPort = dport2;
-                routeLabel = "dealer2";
+            // Comprobamos de forma dinámica cuál de los 5 payloads se utilizó
+            for (let i = 2; i <= 5; i++) {
+                if (payloadStr.includes(`GET /dealer${i}`)) {
+                    targetHost = destinos[i].host;
+                    targetPort = destinos[i].port;
+                    routeLabel = `dealer${i}`;
+                    break;
+                }
             }
 
             console.log("[ROUTING] Route [" + routeLabel + "] matched. Bridging to -> " + targetHost + ":" + targetPort);
@@ -166,7 +168,7 @@ async function checkLicense() {
         process.exit(1);
     }
 
-    const verificationUrl = `${https://dealerbotgenkeys.mcmilton235.workers.dev}/validate?key=${encodeURIComponent(keyDealerFinal)}&client=cloudrun&domain=${encodeURIComponent(runDomain)}`;
+    const verificationUrl = `${WORKER_URL}/validate?key=${encodeURIComponent(keyDealerFinal)}&client=cloudrun&domain=${encodeURIComponent(runDomain)}`;
     console.log("[LICENCIA] Validando clave...");
 
     https.get(verificationUrl, (res) => {
@@ -205,8 +207,9 @@ async function checkLicense() {
 function startServer() {
     server.listen(mainPort, function(){
         console.log("[INFO] Multi-Routing Server started on port: " + mainPort);
-        console.log("[INFO] Target 1 (dealer1): " + dhost1 + ":" + dport1);
-        console.log("[INFO] Target 2 (dealer2): " + dhost2 + ":" + dport2);
+        for (let i = 1; i <= 5; i++) {
+            console.log(`[INFO] Target ${i} (dealer${i}): ` + destinos[i].host + ":" + destinos[i].port);
+        }
     });
 }
 
