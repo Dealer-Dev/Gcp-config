@@ -1,7 +1,5 @@
 /*
 * Proxy Bridge - Multi-Destino (dealer1 al dealer5) con Validación de Licencia
-* Copyright PANCHO7532 - P7COMUnications LLC (c) 2021
-* Dedicated to Emanuel Miranda, for giving me the idea to make this :v
 * Modified for Cloud Run Multi-IP routing (Up to 5 IPs) and license verification.
 */
 const crypto = require("crypto");
@@ -25,14 +23,15 @@ var gcwarn = true;
 
 // Requisitos de Validación (Worker & KEY_DEALER)
 const KEY_DEALER = process.env.KEY_DEALER;
-// Cambiado dinámicamente según la URL configurada en tu función
+// Tu Cloudflare Worker de validación
 const WORKER_URL = "https://dealerbotgenkeys.mcmilton235.workers.dev"; 
 
-// Intentar deducir el dominio run.app dinámicamente desde el entorno de Cloud Run
+// SOLUCIÓN EFICAZ: Usa la variable manual 'MY_RUN_DOMAIN' si existe, de lo contrario intenta deducirla
 const RUN_SERVICE = process.env.K_SERVICE || "dealer-service";
 const RUN_PROJECT = process.env.GCP_PROJECT || "google-cloud-project";
 const RUN_REGION = process.env.K_REVISION ? process.env.K_REVISION.split("-").slice(-2, -1)[0] : "us-central1"; 
-var runDomain = `${RUN_SERVICE}-${RUN_PROJECT}.${RUN_REGION}.run.app`;
+
+var runDomain = process.env.MY_RUN_DOMAIN || `${RUN_SERVICE}-${RUN_PROJECT}.${RUN_REGION}.run.app`;
 
 // Soporte dinámico para argumentos por consola de los 5 destinos (-dhostX y -dportX)
 for(let c = 0; c < process.argv.length; c++) {
